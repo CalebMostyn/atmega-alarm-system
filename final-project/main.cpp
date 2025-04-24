@@ -2,6 +2,7 @@
 #include <avr/io.h>
 #include <avr/interrupt.h>
 #include <util/delay.h>
+#include <string.h>
 
 //TWI constants
 #define TWI_START 0xA4 //(enable=1, start=1, interrupt flag=1)
@@ -135,154 +136,266 @@ void stepperStateMachine(){
 	}
 }
 
-// Constants for lock states
-const int8_t UNLOCK_CLEAR_STATE = 0;
-const int8_t UNLOCK_1_STATE = 1;
-const int8_t UNLOCK_12_STATE = 2;
-const int8_t UNLOCK_123_STATE = 3;
-const int8_t LOCK_CLEAR_STATE = 4;
-const int8_t LOCK_3_STATE = 5;
-const int8_t LOCK_32_STATE = 6;
-const int8_t LOCK_321_STATE = 7;
-// lock state intialized to unlocked & no input
-int8_t lockState= UNLOCK_CLEAR_STATE;
+// Constants for alarm states
+const int8_t DISARM_CLEAR_STATE = 0;
+const int8_t DISARM_1_STATE = 1;
+const int8_t DISARM_12_STATE = 2;
+const int8_t DISARM_123_STATE = 3;
+const int8_t ARM_CLEAR_STATE = 4;
+const int8_t ARM_3_STATE = 5;
+const int8_t ARM_32_STATE = 6;
+const int8_t ARM_321_STATE = 7;
 
-// Small method for printing lock state to screen
-void printLockState() {
-	LCD_Command(CLEAR_DISPLAY);
-	_delay_ms(2);
-	// First line is Lock/Unlock based on state
-	LCD_Command(SET_ADDRESS|0x00);
-	if (lockState == UNLOCK_CLEAR_STATE || lockState == UNLOCK_1_STATE || lockState == UNLOCK_12_STATE || lockState == UNLOCK_123_STATE) {
-		LCD_Display('U');
-		LCD_Display('N');
-		LCD_Display('L');
-		LCD_Display('O');
-		LCD_Display('C');
-		LCD_Display('K');
-		} else {
-		LCD_Display('L');
-		LCD_Display('O');
-		LCD_Display('C');
-		LCD_Display('K');
+// Alarm code constants
+const uint8_t BUTTON_1 = 0x04;
+const uint8_t BUTTON_2 = 0x02;
+const uint8_t BUTTON_3 = 0x01;
+const uint8_t DISARM_CODE_1 = BUTTON_2;
+const char DISARM_CODE_1_CHAR = '2';
+const uint8_t DISARM_CODE_2 = BUTTON_1;
+const char DISARM_CODE_2_CHAR = '1';
+const uint8_t DISARM_CODE_3 = BUTTON_3;
+const char DISARM_CODE_3_CHAR = '3';
+const uint8_t ARM_CODE_1 = BUTTON_2;
+const char ARM_CODE_1_CHAR = '2';
+const uint8_t ARM_CODE_2 = BUTTON_3;
+const char ARM_CODE_2_CHAR = '3';
+const uint8_t ARM_CODE_3 = BUTTON_1;
+const char ARM_CODE_3_CHAR = '1';
+// alarm state intialized to disarmed & no input
+int8_t alarmState= DISARM_CLEAR_STATE;
+const char* ARMED_TEXT = "ARMED";
+const char* DISARMED_TEXT = "DISARMED";
+const char* ALARM_TEXT = "ALARM";
+// alarm static variables
+bool alarm_tripped = false;
+
+void clearLCD(uint8_t start_address, uint8_t end_address) {
+	int curr_address = start_address;
+	LCD_Command(SET_ADDRESS|start_address);
+	while (curr_address <= end_address) {
+		LCD_Display(' ');
+		curr_address++;
 	}
-	// Second line shows current code state
+}
+
+void printArmState() {
+	clearLCD(0x00, 0x07);
+	LCD_Command(SET_ADDRESS|0x00);
+	if (alarmState == DISARM_CLEAR_STATE || alarmState == DISARM_1_STATE || alarmState == DISARM_12_STATE || alarmState == DISARM_123_STATE) {
+		for (unsigned int i = 0; i < strlen(DISARMED_TEXT); i++) {
+			LCD_Display(DISARMED_TEXT[i]);
+		}
+	} else if (alarm_tripped) {
+		for (unsigned int i = 0; i < strlen(ALARM_TEXT); i++) {
+			LCD_Display(ALARM_TEXT[i]);
+		}
+	} else {
+		for (unsigned int i = 0; i < strlen(ARMED_TEXT); i++) {
+			LCD_Display(ARMED_TEXT[i]);
+		}
+	}
+}
+
+void printCodeState() {
+	clearLCD(0x40, 0x42);
 	LCD_Command(SET_ADDRESS|0x40);
-	LCD_Display('C');
-	LCD_Display('O');
-	LCD_Display('D');
-	LCD_Display('E');
-	LCD_Display(':');
-	switch (lockState) {
-		case UNLOCK_1_STATE:
-		LCD_Display('1');
+	switch (alarmState) {
+		case DISARM_1_STATE:
+		LCD_Display(DISARM_CODE_1_CHAR);
 		break;
-		case UNLOCK_12_STATE:
-		LCD_Display('1');
-		LCD_Display('2');
+		case DISARM_12_STATE:
+		LCD_Display(DISARM_CODE_1_CHAR);
+		LCD_Display(DISARM_CODE_2_CHAR);
 		break;
-		case UNLOCK_123_STATE:
-		LCD_Display('1');
-		LCD_Display('2');
-		LCD_Display('3');
+		case DISARM_123_STATE:
+		LCD_Display(DISARM_CODE_1_CHAR);
+		LCD_Display(DISARM_CODE_2_CHAR);
+		LCD_Display(DISARM_CODE_3_CHAR);
 		break;
-		case LOCK_3_STATE:
-		LCD_Display('3');
+		case ARM_3_STATE:
+		LCD_Display(ARM_CODE_1_CHAR);
 		break;
-		case LOCK_32_STATE:
-		LCD_Display('3');
-		LCD_Display('2');
+		case ARM_32_STATE:
+		LCD_Display(ARM_CODE_1_CHAR);
+		LCD_Display(ARM_CODE_2_CHAR);
 		break;
-		case LOCK_321_STATE:
-		LCD_Display('3');
-		LCD_Display('2');
-		LCD_Display('1');
+		case ARM_321_STATE:
+		LCD_Display(ARM_CODE_1_CHAR);
+		LCD_Display(ARM_CODE_2_CHAR);
+		LCD_Display(ARM_CODE_3_CHAR);
 		break;
 	}
 }
 
-void lockStateMachine(){
-	// Update lock state based on button pressed
-	switch (lockState) {
-		case UNLOCK_CLEAR_STATE:
-		if (falling_edges&0x04) {
-			lockState = UNLOCK_1_STATE;
-		}
-		break;
-		case UNLOCK_1_STATE:
-		if (falling_edges&0x02) {
-			lockState = UNLOCK_12_STATE;
+
+
+// For time multiplexing LED when alarm tripped
+uint8_t time_since_blink = 0;
+void updateLED() {
+	switch (alarmState) {
+		case DISARM_CLEAR_STATE:
+		case DISARM_1_STATE:
+		case DISARM_12_STATE:
+		case DISARM_123_STATE:
+			PORTD |= (1<<PIND4); // Turn green on
+			PORTD &= ~(1<<PIND3); // Turn red off
+			PORTD &= ~(1<<PIND5); // Turn buzzer off	
+			time_since_blink = 0;
+			break;
+		case ARM_CLEAR_STATE:
+		case ARM_3_STATE:
+		case ARM_32_STATE:
+		case ARM_321_STATE:
+			if (!alarm_tripped) {
+				PORTD |= (1<<PIND3); // Turn red on
+				PORTD &= ~(1<<PIND4); // Turn green off
+				PORTD &= ~(1<<PIND5); // Turn buzzer off
 			} else {
-			lockState = UNLOCK_CLEAR_STATE;
+				PORTD &= ~(1<<PIND4); // Ensure green is off
+				PORTD |= (1<<PIND5); // Turn buzzer on
+				if (time_since_blink >= 25) {
+					PORTD ^= (1<<PIND3); // toggle red
+					time_since_blink = 0;
+				} else {
+					time_since_blink++;
+				}
+			}
+			break;
+	}	
+}
+
+void tripAlarm(bool tripped) {
+	alarm_tripped = tripped;
+	printArmState();
+	updateLED();
+}
+
+int16_t arm_count = 1000;
+void armAlarm() {
+	stepperDirection = -1;
+	for (int i = 0; i < 512; i++) {
+		stepperStateMachine();
+		_delay_ms(10);
+	}
+	alarmState = ARM_CLEAR_STATE;
+	printArmState();
+	printCodeState();
+}
+
+void disarmAlarm() {
+	tripAlarm(false);
+	stepperDirection = 1;
+	for (int i = 0; i < 512; i++) {
+		stepperStateMachine();
+		_delay_ms(10);
+	}
+	alarmState = DISARM_CLEAR_STATE;
+	printCodeState();
+}
+
+char prev_tens = ' ';
+char prev_ones = ' ';
+void printCountdown() {
+	if (alarmState == DISARM_123_STATE || alarmState == ARM_321_STATE) {
+		uint8_t count_seconds = (arm_count / 100) + 1;
+		char tens_place = '0' + ((count_seconds / 10) % 10);
+		tens_place = tens_place == '0' ? ' ' : tens_place;
+		char ones_place = '0' + (count_seconds % 10);
+		//ones_place = ones_place == '0' ? ' ' : ones_place;
+		if (tens_place != prev_tens || ones_place != prev_ones) {
+			LCD_Command(SET_ADDRESS|0x4E);
+			LCD_Display(tens_place);
+			LCD_Display(ones_place);
+		}
+	} else {
+		clearLCD(0x4E, 0x4F);
+	}
+}
+
+void alarmStateMachine(){
+	// Update alarm state based on button pressed
+	switch (alarmState) {
+		case DISARM_CLEAR_STATE:
+		printArmState();
+		if (falling_edges&DISARM_CODE_1) {
+			alarmState = DISARM_1_STATE;
 		}
 		break;
-		case UNLOCK_12_STATE:
-		if (falling_edges&0x01) {
-			lockState = UNLOCK_123_STATE;
-			} else {
-			lockState = UNLOCK_CLEAR_STATE;
+		case DISARM_1_STATE:
+		if (falling_edges&DISARM_CODE_2) {
+			alarmState = DISARM_12_STATE;
+		} else {
+			alarmState = DISARM_CLEAR_STATE;
 		}
 		break;
-		case LOCK_CLEAR_STATE:
-		if (falling_edges&0x01) {
-			lockState = LOCK_3_STATE;
+		case DISARM_12_STATE:
+		if (falling_edges&DISARM_CODE_3) {
+			alarmState = DISARM_123_STATE;
+			arm_count = 1000;	
+		} else {
+			alarmState = DISARM_CLEAR_STATE;
 		}
 		break;
-		case LOCK_3_STATE:
-		if (falling_edges&0x02) {
-			lockState = LOCK_32_STATE;
-			} else {
-			lockState = LOCK_CLEAR_STATE;
+		case ARM_CLEAR_STATE:
+		printArmState();
+		if (falling_edges&ARM_CODE_1) {
+			alarmState = ARM_3_STATE;
+		} else {
+			tripAlarm(true);
 		}
 		break;
-		case LOCK_32_STATE:
-		if (falling_edges&0x04) {
-			lockState = LOCK_321_STATE;
-			} else {
-			lockState = LOCK_CLEAR_STATE;
+		case ARM_3_STATE:
+		if (falling_edges&ARM_CODE_2) {
+			alarmState = ARM_32_STATE;
+		} else {
+			alarmState = ARM_CLEAR_STATE;
+			tripAlarm(true);
+		}
+		break;
+		case ARM_32_STATE:
+		if (falling_edges&ARM_CODE_3) {
+			alarmState = ARM_321_STATE;
+			arm_count = 1000;
+		} else {
+			alarmState = ARM_CLEAR_STATE;
+			tripAlarm(true);
 		}
 		break;
 	}
 	// Update LCD
-	printLockState();
-	// If lock/unlock combo pressed, turn motor, update state, and update LCD
-	if (lockState == UNLOCK_123_STATE) {
-		//unlock
-		stepperDirection = -1;
-		for (int i = 0; i < 1024; i++) {
-			stepperStateMachine();
-			_delay_ms(10);
-		}
-		lockState = LOCK_CLEAR_STATE;
-		printLockState();
-		} else if (lockState == LOCK_321_STATE) {
-		//lock
-		stepperDirection = 1;
-		for (int i = 0; i < 1024; i++) {
-			stepperStateMachine();
-			_delay_ms(10);
-		}
-		lockState = UNLOCK_CLEAR_STATE;
-		printLockState();
-	}
+	printCodeState();
 }
-
-
 
 ISR(TIMER1_COMPA_vect){
 	// Debounce push buttons
 	softwareDebounce(PIND);
 	if (falling_edges&0x07) {
-		// Button pressed, update lock state
-		lockStateMachine();
+		// Button pressed, update alarm state
+		alarmStateMachine();
 	}
+	// If arm/disarm combo pressed, turn motor, update state, and update LCD
+	if (alarmState == DISARM_123_STATE) {
+		//arming the alarm
+		if (--arm_count <= 0) { // waited 10s
+			armAlarm();
+		}
+		printCountdown();
+		} else if (alarmState == ARM_321_STATE) {
+		//disarming the alarm
+		//if (--arm_count <= 0) { // waited 10s
+			disarmAlarm();
+		//}
+		printCountdown();
+	}
+	updateLED();
 }
 
 
 int main(void)
 {
 	//CONFIGURE IO
-	DDRD = (0<<PIND0)|(0<<PIND1)|(0<<PIND2); // push buttons
+	DDRD = (0<<PIND0)|(0<<PIND1)|(0<<PIND2)|(1<<PIND3)|(1<<PIND4)|(1<<PIND5); // D0 - D2 push buttons, D3 Red LED, D4 Green LED, D5 Buzzer
 	DDRC = (1<<PINC0)|(1<<PINC1)|(1<<PINC2)|(1<<PINC3); // motor controller
 	//Configure Bit Rate (TWBR and TWSR)
 	TWBR = 18;	//TWBR=18
@@ -317,30 +430,18 @@ int main(void)
 	LCD_Command(0x0C); //Display no cursor
 	LCD_Command(0x06); //Automatic Increment
 	
-	LCD_Command(SET_ADDRESS|0x00);
-	LCD_Display('U');
-	LCD_Display('N');
-	LCD_Display('L');
-	LCD_Display('O');
-	LCD_Display('C');
-	LCD_Display('K');
-	LCD_Command(SET_ADDRESS|0x40);
-	LCD_Display('C');
-	LCD_Display('O');
-	LCD_Display('D');
-	LCD_Display('E');
-	LCD_Display(':');
+	printArmState();
+	printCodeState();
 	
 	//Configure Timer 1
+	// CTC, Prescalar of 8
 	TCCR1A = (0<<WGM10)|(0<<WGM11);
-	TCCR1B = (1<<WGM12)|(0<<WGM13)|(0<<CS12)|(0<<CS11)|(1<<CS10);
+	TCCR1B = (1<<WGM12)|(0<<WGM13)|(0<<CS12)|(1<<CS11)|(0<<CS10);
 	TIMSK1 = (1<<OCIE1A);
-	OCR1A = 15999;
+	OCR1A = 19999; // 10 ms
 	
 	sei();
 	
 	/* Replace with your application code */
-	while (1)
-	{
-	}
+	while (1) {}
 }
