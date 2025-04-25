@@ -36,6 +36,11 @@ volatile uint8_t switch_array[kBufferLength]={0};
 int8_t stepperState=0;
 int8_t stepperDirection=0;
 
+// Pinout
+#define BUZZER_PIN PIND6
+#define GREEN_LED_PIN PIND5
+#define RED_LED_PIN PIND4
+
 //Sample switches at particular interval
 void softwareDebounce(uint8_t sampleData){
 	static uint8_t sample_index= 0;			//Index used to store switch samples in array
@@ -228,8 +233,6 @@ void printCodeState() {
 	}
 }
 
-
-
 // For time multiplexing LED when alarm tripped
 uint8_t time_since_blink = 0;
 void updateLED() {
@@ -238,9 +241,9 @@ void updateLED() {
 		case DISARM_1_STATE:
 		case DISARM_12_STATE:
 		case DISARM_123_STATE:
-			PORTD |= (1<<PIND4); // Turn green on
-			PORTD &= ~(1<<PIND3); // Turn red off
-			PORTD &= ~(1<<PIND5); // Turn buzzer off	
+			PORTD |= (1<<GREEN_LED_PIN); // Turn green on
+			PORTD &= ~(1<<RED_LED_PIN); // Turn red off
+			PORTD &= ~(1<<BUZZER_PIN); // Turn buzzer off	
 			time_since_blink = 0;
 			break;
 		case ARM_CLEAR_STATE:
@@ -248,14 +251,14 @@ void updateLED() {
 		case ARM_32_STATE:
 		case ARM_321_STATE:
 			if (!alarm_tripped) {
-				PORTD |= (1<<PIND3); // Turn red on
-				PORTD &= ~(1<<PIND4); // Turn green off
-				PORTD &= ~(1<<PIND5); // Turn buzzer off
+				PORTD |= (1<<RED_LED_PIN); // Turn red on
+				PORTD &= ~(1<<GREEN_LED_PIN); // Turn green off
+				PORTD &= ~(1<<BUZZER_PIN); // Turn buzzer off
 			} else {
-				PORTD &= ~(1<<PIND4); // Ensure green is off
-				PORTD |= (1<<PIND5); // Turn buzzer on
+				PORTD &= ~(1<<GREEN_LED_PIN); // Ensure green is off
+				PORTD |= (1<<BUZZER_PIN); // Turn buzzer on
 				if (time_since_blink >= 25) {
-					PORTD ^= (1<<PIND3); // toggle red
+					PORTD ^= (1<<RED_LED_PIN); // toggle red
 					time_since_blink = 0;
 				} else {
 					time_since_blink++;
@@ -369,7 +372,7 @@ void alarmStateMachine(){
 
 ISR(TIMER1_COMPA_vect){
 	// Debounce push buttons
-	softwareDebounce(PIND);
+	softwareDebounce(PINB);
 	if (falling_edges&0x07) {
 		// Button pressed, update alarm state
 		alarmStateMachine();
@@ -381,21 +384,38 @@ ISR(TIMER1_COMPA_vect){
 			armAlarm();
 		}
 		printCountdown();
-		} else if (alarmState == ARM_321_STATE) {
+	} else if (alarmState == ARM_321_STATE) {
 		//disarming the alarm
-		//if (--arm_count <= 0) { // waited 10s
-			disarmAlarm();
-		//}
+		disarmAlarm();
 		printCountdown();
 	}
 	updateLED();
 }
 
+const uint8_t HELP_TX_PACKET = 0b11110000;
+const uint8_t HELP_RX_PACKET = 0b00001111;
+
+ISR(USART_TX_vect){
+	// Help packet finished transmitting
+	LCD_Command(SET_ADDRESS|0x0C);
+	LCD_Display('B');
+	LCD_Display('E');
+	LCD_Display('E');
+	LCD_Display('F');
+}
+
+ISR(INT1_vect) {
+	//start USART transmission
+	if (UCSR0A & (1<<UDRE0)){ //check to see if transmit buffer is clear
+		UDR0 = HELP_TX_PACKET; //set data register to slave address to start transmission
+	}
+}
 
 int main(void)
 {
 	//CONFIGURE IO
-	DDRD = (0<<PIND0)|(0<<PIND1)|(0<<PIND2)|(1<<PIND3)|(1<<PIND4)|(1<<PIND5); // D0 - D2 push buttons, D3 Red LED, D4 Green LED, D5 Buzzer
+	DDRD = (0<<PIND3)|(1<<RED_LED_PIN)|(1<<GREEN_LED_PIN)|(1<<BUZZER_PIN); // D3 - Help Push Button
+	DDRB = (0<<PINB0)|(0<<PINB1)|(0<<PINB2);
 	DDRC = (1<<PINC0)|(1<<PINC1)|(1<<PINC2)|(1<<PINC3); // motor controller
 	//Configure Bit Rate (TWBR and TWSR)
 	TWBR = 18;	//TWBR=18
@@ -439,6 +459,18 @@ int main(void)
 	TCCR1B = (1<<WGM12)|(0<<WGM13)|(0<<CS12)|(1<<CS11)|(0<<CS10);
 	TIMSK1 = (1<<OCIE1A);
 	OCR1A = 19999; // 10 ms
+	
+	// Configure INT1 Interrupt
+	EIMSK = (1<<INT1);
+	EICRA = (1<<ISC11)|(0<ISC10);
+	
+	// Configure USART
+	UCSR0A=(0<<U2X0)|(1<<MPCM0); //enable multiprocessor mode
+	UCSR0B=(1<<TXCIE0)|(1<<TXEN0); //enable transmitter mode, tx interrupt
+	UCSR0C=(1<<UCSZ01)|(1<<UCSZ00); // 8-bit characters
+	UBRR0=3; //same baud rate for both Tx and Rx
+	DDRD &= ~(1 << PIND0); // Set RX as input
+	DDRD |= (1 << PIND1);  // Set TX as output
 	
 	sei();
 	
