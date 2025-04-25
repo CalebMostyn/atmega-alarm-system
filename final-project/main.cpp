@@ -392,22 +392,19 @@ ISR(TIMER1_COMPA_vect){
 	updateLED();
 }
 
-const uint8_t HELP_TX_PACKET = 0b11110000;
-const uint8_t HELP_RX_PACKET = 0b00001111;
+const uint8_t HELP_TX_PACKET = 0b11110000; // indicates to other board we've "requested help"
+const uint8_t HELP_RX_PACKET = 0b00001111; // message that should be sent back by other board
 
 ISR(USART_TX_vect){
 	// Help packet finished transmitting
-	LCD_Command(SET_ADDRESS|0x0C);
-	LCD_Display('B');
-	LCD_Display('E');
-	LCD_Display('E');
-	LCD_Display('F');
+	
 }
 
+// Triggered on help button falling edge
 ISR(INT1_vect) {
 	//start USART transmission
 	if (UCSR0A & (1<<UDRE0)){ //check to see if transmit buffer is clear
-		UDR0 = HELP_TX_PACKET; //set data register to slave address to start transmission
+		UDR0 = HELP_TX_PACKET; //set data register to tx packet
 	}
 }
 
