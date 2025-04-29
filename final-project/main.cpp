@@ -395,15 +395,45 @@ ISR(TIMER1_COMPA_vect){
 const uint8_t HELP_TX_PACKET = 0b11110000; // indicates to other board we've "requested help"
 const uint8_t HELP_RX_PACKET = 0b00001111; // message that should be sent back by other board
 
-ISR(USART_TX_vect){
+#define TRANSMIT true
+#define RECEIVE false
+bool usart_mode;
+void usart_config(bool tx) {
+	usart_mode = tx;
+	if (tx == TRANSMIT) {
+		UCSR0B=(1<<TXCIE0)|(1<<TXEN0)|(0<<RXCIE0)|(0<<RXEN0);
+	} else {
+		UCSR0B=(0<<TXCIE0)|(0<<TXEN0)|(1<<RXCIE0)|(1<<RXEN0);
+	}
+}
+
+ISR(USART_RX_vect){
 	// Help packet finished transmitting
-	
+	if (usart_mode == RECEIVE && UDR0 == HELP_RX_PACKET) {
+		// received correct response, display OK for 2 seconds then return to business as usual
+		LCD_Command(CLEAR_DISPLAY);
+		_delay_ms(2);
+		LCD_Display('O');
+		LCD_Display('K');
+		_delay_ms(2000);
+		printArmState(); // redisplay state
+		printCodeState(); // redisplay code
+		usart_config(TRANSMIT);
+	}
+}
+
+
+ISR(USART_TX_vect){
+	// Help packet finished transmitting, switch to rx mode
+	if (usart_mode == TRANSMIT) {
+		usart_config(RECEIVE);	
+	}
 }
 
 // Triggered on help button falling edge
 ISR(INT1_vect) {
 	//start USART transmission
-	if (UCSR0A & (1<<UDRE0)){ //check to see if transmit buffer is clear
+	if (usart_mode == TRANSMIT && (UCSR0A & (1<<UDRE0))){ //check to see if transmit buffer is clear and we are in transmit mode
 		UDR0 = HELP_TX_PACKET; //set data register to tx packet
 	}
 }
@@ -463,7 +493,7 @@ int main(void)
 	
 	// Configure USART
 	UCSR0A=(0<<U2X0)|(1<<MPCM0); //enable multiprocessor mode
-	UCSR0B=(1<<TXCIE0)|(1<<TXEN0); //enable transmitter mode, tx interrupt
+	usart_config(TRANSMIT); // transmit mode, tx interrupt
 	UCSR0C=(1<<UCSZ01)|(1<<UCSZ00); // 8-bit characters
 	UBRR0=3; //same baud rate for both Tx and Rx
 	DDRD &= ~(1 << PIND0); // Set RX as input
