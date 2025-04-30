@@ -416,6 +416,12 @@ ISR(USART_RX_vect){
 		LCD_Display('O');
 		LCD_Display('K');
 		_delay_ms(2000);
+		// clear any partially input code after rx
+		if (alarmState == DISARM_1_STATE | alarmState == DISARM_12_STATE | alarmState == DISARM_123_STATE) {
+			alarmState = DISARM_CLEAR_STATE;
+		} else if (alarmState == ARM_3_STATE | alarmState == ARM_32_STATE | alarmState == ARM_321_STATE) {
+			alarmState = ARM_CLEAR_STATE;
+		}
 		printArmState(); // redisplay state
 		printCodeState(); // redisplay code
 		usart_config(TRANSMIT);
