@@ -12,9 +12,9 @@
     <OutputFileName>$(MSBuildProjectName)</OutputFileName>
     <OutputFileExtension>.elf</OutputFileExtension>
     <OutputDirectory>$(MSBuildProjectDirectory)\$(Configuration)</OutputDirectory>
-    <AssemblyName>final-project</AssemblyName>
-    <Name>final-project</Name>
-    <RootNamespace>final-project</RootNamespace>
+    <AssemblyName>alarm-system</AssemblyName>
+    <Name>alarm-system</Name>
+    <RootNamespace>alarm-system</RootNamespace>
     <ToolchainFlavour>Native</ToolchainFlavour>
     <KeepTimersRunning>true</KeepTimersRunning>
     <OverrideVtor>false</OverrideVtor>
